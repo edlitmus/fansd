@@ -52,18 +52,58 @@ Enable debug-level structured logging.
 Each poll cycle emits one line per sensor showing the raw reading and
 the computed fan speed.
 .It Fl init-config Ar file | Fl
-Auto-detect hardware and write a starter configuration to
+Probe hardware and write a starter configuration to
 .Ar file .
 Pass
 .Fl
 to write to standard output.
-Detection includes all storage disks reported by
-.Xr sysctl 8
-.Va kern.disks
-.Pq Cm ada* , da* , nvd* , nda*
-and the number of CPUs for load threshold scaling.
 .Nm
 exits after writing the config; the daemon loop does not start.
+.Pp
+The following probes are performed:
+.Bl -bullet -compact
+.It
+Storage disks are enumerated via
+.Xr sysctl 8
+.Va kern.disks
+.Pq Cm ada* , da* , nvd* , nda* .
+Each candidate is queried with
+.Xr smartctl 8
+to exclude virtual or no-medium devices
+.Pq e.g.\& iDRAC virtual floppy .
+.It
+Drive trip temperature is read from
+.Xr smartctl 8
+output
+.Pq Qq Drive Trip Temperature
+for SCSI/SAS, or from attribute 194 min/max for ATA.
+Per-drive thresholds are derived as
+.Cm max_temp No = trip\-5
+and
+.Cm min_temp No = max_temp\-15 .
+Falls back to 35/55 when unavailable.
+.It
+CPU TjMax is read from
+.Va dev.cpu.N.coretemp.tjmax
+or
+.Va dev.cpu.N.amdtemp.tjmax .
+CPU thresholds are set to
+.Cm max_temp No = TjMax\-5
+and
+.Cm min_temp No = max_temp\-30 .
+Falls back to 50/80 when unavailable.
+.It
+System load thresholds are scaled by CPU count.
+.El
+.Pp
+Drive probing requires root access to open raw disk devices.
+When run without root,
+.Nm
+prints a warning to stderr and skips drive probing, including all detected
+disks without filtering.
+CPU TjMax probing does not require root.
+.Pp
+The generated IPMI credentials are placeholders and must be edited before use.
 .El
 .Sh CONFIGURATION
 The configuration file uses TOML syntax.
@@ -216,14 +256,14 @@ rc.d service script.
 .Sh EXIT STATUS
 .Ex -std
 .Sh EXAMPLES
-Generate a starter config from detected hardware and write it to stdout:
+Generate a starter config (root required for accurate drive detection):
 .Bd -literal -offset indent
-fansd -init-config -
+sudo fansd -init-config /usr/local/etc/fansd/fansd.toml
 .Ed
 .Pp
-Write the generated config directly to the default location:
+Preview the generated config on stdout without writing a file:
 .Bd -literal -offset indent
-fansd -init-config /usr/local/etc/fansd/fansd.toml
+sudo fansd -init-config -
 .Ed
 .Pp
 Run in the foreground with debug logging:

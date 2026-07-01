@@ -14,7 +14,7 @@ fan control is restored.
 - System load average normalized by CPU count
 - Per-sensor linear interpolation — the hottest sensor wins
 - Configurable hysteresis to avoid fan hunting
-- Auto-detects drives and CPU count with `-init-config`
+- `-init-config` probes CPU TjMax and drive trip temperatures to derive thresholds automatically
 - FreeBSD rc.d service script included
 
 ## Requirements
@@ -51,11 +51,20 @@ install -m 755 fansd /usr/local/sbin/fansd
 Generate a starter config from detected hardware:
 
 ```sh
-fansd -init-config /usr/local/etc/fansd/fansd.toml
+sudo fansd -init-config /usr/local/etc/fansd/fansd.toml
 ```
 
 Then edit the file and fill in the IPMI credentials.  See
 [fansd.toml.example](fansd.toml.example) for an annotated reference.
+
+Running as root is required for accurate drive detection.  `init-config`
+probes each disk with `smartctl` to filter out virtual devices (e.g. iDRAC
+virtual floppy) and reads the drive trip temperature to derive per-drive
+thresholds (`max_temp = trip − 5°C`, `min_temp = max_temp − 15°C`).
+CPU thresholds are derived from the TjMax sysctl
+(`dev.cpu.N.coretemp.tjmax` / `amdtemp.tjmax`), which is world-readable,
+so CPU probing works without root.  Running without root skips drive probing
+with a warning.
 
 ### Config reference
 
@@ -85,13 +94,13 @@ max_load = 4.0                # normalized load per core → max fan speed
 
 [[drives]]
 device   = "/dev/da0"
-min_temp = 35
-max_temp = 50
+min_temp = 40    # derived from drive trip temperature when using -init-config
+max_temp = 55
 
 [[drives]]
 device   = "/dev/da1"
-min_temp = 35
-max_temp = 50
+min_temp = 40
+max_temp = 55
 ```
 
 ### Fan speed calculation
@@ -113,7 +122,7 @@ fansd [-config path] [-debug] [-init-config path|-]
 |---|---|---|
 | `-config` | `/usr/local/etc/fansd/fansd.toml` | Path to config file |
 | `-debug` | false | Enable debug-level logging |
-| `-init-config` | — | Write auto-detected starter config to path (use `-` for stdout) |
+| `-init-config` | — | Probe hardware and write starter config to path (use `-` for stdout); run as root for full drive detection |
 
 ## FreeBSD rc.d integration
 
