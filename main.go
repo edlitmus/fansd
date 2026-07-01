@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	cfgPath := flag.String("config", "/etc/fansd/fansd.toml", "path to config file")
+	cfgPath := flag.String("config", "/usr/local/etc/fansd/fansd.toml", "path to config file")
 	debug := flag.Bool("debug", false, "enable debug logging")
 	flag.Parse()
 
