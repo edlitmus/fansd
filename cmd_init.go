@@ -111,6 +111,12 @@ func detectDrives() ([]string, error) {
 	}
 	sort.Strings(candidates)
 
+	if os.Getuid() != 0 {
+		fmt.Fprintf(os.Stderr, "warning: not running as root; skipping drive probe — virtual devices will not be excluded\n")
+		fmt.Fprintf(os.Stderr, "         re-run with sudo for accurate drive detection\n")
+		return candidates, nil
+	}
+
 	var drives []string
 	for _, dev := range candidates {
 		if !isPhysicalDisk(dev) {
