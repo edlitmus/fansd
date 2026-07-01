@@ -3,32 +3,45 @@ package collector
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
 
 // DriveTemp returns the temperature in Celsius for the given block device.
-// It tries auto-detection first, then retries with an explicit SCSI device
-// type for SAS/SCSI drives that smartctl cannot auto-identify.
+// The smartctl device type is inferred from the device name:
+//   - ada*        → ATA/SATA, auto-detect
+//   - da*         → SCSI/SAS, explicit -d scsi
+//   - nvd*, nda*  → NVMe, auto-detect
+//   - anything else → auto-detect, then -d scsi fallback
 func DriveTemp(device string) (float64, error) {
-	if t, err := smartctlTemp(device); err == nil {
-		return t, nil
+	base := filepath.Base(device)
+	switch {
+	case strings.HasPrefix(base, "ada"),
+		strings.HasPrefix(base, "nvd"),
+		strings.HasPrefix(base, "nda"):
+		return smartctlTemp(device)
+	case strings.HasPrefix(base, "da"):
+		return smartctlTemp(device, "-d", "scsi")
+	default:
+		if t, err := smartctlTemp(device); err == nil {
+			return t, nil
+		}
+		return smartctlTemp(device, "-d", "scsi")
 	}
-	// Retry with explicit SCSI type — needed for SAS drives on some HBAs.
-	if t, err := smartctlTemp(device, "-d", "scsi"); err == nil {
-		return t, nil
-	}
-	return 0, fmt.Errorf("smartctl %s: no temperature found", device)
 }
 
 func smartctlTemp(device string, extra ...string) (float64, error) {
 	args := append([]string{"-A"}, extra...)
 	args = append(args, device)
-	out, err := exec.Command("smartctl", args...).Output()
-	// smartctl exits non-zero for warnings but still writes useful output.
-	// Only bail when there is truly no output.
-	if err != nil && len(out) == 0 {
-		return 0, fmt.Errorf("%w", err)
+
+	// CombinedOutput captures both stdout and stderr so we can detect
+	// permission errors that smartctl writes to stdout alongside the header.
+	out, err := exec.Command("smartctl", args...).CombinedOutput()
+	if err != nil {
+		if len(out) == 0 || strings.Contains(string(out), "Permission denied") {
+			return 0, fmt.Errorf("smartctl %s: permission denied (run as root)", device)
+		}
 	}
 	return parseSmartTemp(out)
 }
@@ -64,5 +77,5 @@ func parseSmartTemp(out []byte) (float64, error) {
 			}
 		}
 	}
-	return 0, fmt.Errorf("temperature not found")
+	return 0, fmt.Errorf("temperature not found in smartctl output")
 }
