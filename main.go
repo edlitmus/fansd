@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"log/slog"
 	"os"
@@ -39,8 +40,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	ipmiClient := ipmi.NewClient(cfg.IPMI.Host, cfg.IPMI.User, cfg.IPMI.Password, cfg.IPMI.Interface)
-	fanCtrl := controller.NewFanController(cfg.Fan.MinSpeed, cfg.Fan.MaxSpeed, cfg.Fan.Hysteresis)
+	d := newDaemon(cfg)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -50,16 +50,15 @@ func main() {
 
 	slog.Info("fansd started", "host", cfg.IPMI.Host, "poll", cfg.Fan.PollInterval.Duration)
 
-	// Run once immediately, then on each tick.
-	runCycle(cfg, ipmiClient, fanCtrl)
+	d.runCycle()
 
 	for {
 		select {
 		case <-ticker.C:
-			runCycle(cfg, ipmiClient, fanCtrl)
+			d.runCycle()
 		case sig := <-stop:
 			slog.Info("shutting down", "signal", sig)
-			if err := ipmiClient.EnableAutoFan(); err != nil {
+			if err := d.ipmiClient.EnableAutoFan(); err != nil {
 				slog.Warn("restore auto fan", "err", err)
 			} else {
 				slog.Info("auto fan control restored")
@@ -69,14 +68,30 @@ func main() {
 	}
 }
 
-func runCycle(cfg *Config, ipmiClient *ipmi.Client, fanCtrl *controller.FanController) {
-	readings := collectReadings(cfg)
+type daemon struct {
+	cfg        *Config
+	ipmiClient *ipmi.Client
+	fanCtrl    *controller.FanController
+	deadDrives map[string]bool
+}
+
+func newDaemon(cfg *Config) *daemon {
+	return &daemon{
+		cfg:        cfg,
+		ipmiClient: ipmi.NewClient(cfg.IPMI.Host, cfg.IPMI.User, cfg.IPMI.Password, cfg.IPMI.Interface),
+		fanCtrl:    controller.NewFanController(cfg.Fan.MinSpeed, cfg.Fan.MaxSpeed, cfg.Fan.Hysteresis),
+		deadDrives: make(map[string]bool),
+	}
+}
+
+func (d *daemon) runCycle() {
+	readings := d.collectReadings()
 	if len(readings) == 0 {
 		slog.Warn("no readings collected, skipping cycle")
 		return
 	}
 
-	speed, changed, err := fanCtrl.Compute(readings)
+	speed, changed, err := d.fanCtrl.Compute(readings)
 	if err != nil {
 		slog.Error("compute fan speed", "err", err)
 		return
@@ -88,18 +103,18 @@ func runCycle(cfg *Config, ipmiClient *ipmi.Client, fanCtrl *controller.FanContr
 	}
 
 	slog.Info("setting fan speed", "speed_pct", speed)
-	if err := ipmiClient.SetManualFanSpeed(speed); err != nil {
+	if err := d.ipmiClient.SetManualFanSpeed(speed); err != nil {
 		slog.Error("set fan speed", "err", err)
 	}
 }
 
-func collectReadings(cfg *Config) []controller.Reading {
+func (d *daemon) collectReadings() []controller.Reading {
 	var readings []controller.Reading
 
-	if cfg.CPU.Enabled {
+	if d.cfg.CPU.Enabled {
 		temp, err := collector.CPUTemp(
-			cfg.CPU.SensorsCmd,
-			cfg.IPMI.Host, cfg.IPMI.User, cfg.IPMI.Password, cfg.IPMI.Interface,
+			d.cfg.CPU.SensorsCmd,
+			d.cfg.IPMI.Host, d.cfg.IPMI.User, d.cfg.IPMI.Password, d.cfg.IPMI.Interface,
 		)
 		if err != nil {
 			slog.Warn("cpu temp", "err", err)
@@ -107,13 +122,13 @@ func collectReadings(cfg *Config) []controller.Reading {
 			readings = append(readings, controller.Reading{
 				Name:   "cpu",
 				Value:  temp,
-				MinVal: cfg.CPU.MinTemp,
-				MaxVal: cfg.CPU.MaxTemp,
+				MinVal: d.cfg.CPU.MinTemp,
+				MaxVal: d.cfg.CPU.MaxTemp,
 			})
 		}
 	}
 
-	if cfg.Load.Enabled {
+	if d.cfg.Load.Enabled {
 		load, err := collector.SystemLoad()
 		if err != nil {
 			slog.Warn("system load", "err", err)
@@ -121,23 +136,31 @@ func collectReadings(cfg *Config) []controller.Reading {
 			readings = append(readings, controller.Reading{
 				Name:   "load",
 				Value:  load,
-				MinVal: cfg.Load.MinLoad,
-				MaxVal: cfg.Load.MaxLoad,
+				MinVal: d.cfg.Load.MinLoad,
+				MaxVal: d.cfg.Load.MaxLoad,
 			})
 		}
 	}
 
-	for _, d := range cfg.Drives {
-		temp, err := collector.DriveTemp(d.Device)
+	for _, drv := range d.cfg.Drives {
+		if d.deadDrives[drv.Device] {
+			continue
+		}
+		temp, err := collector.DriveTemp(drv.Device)
 		if err != nil {
-			slog.Warn("drive temp", "device", d.Device, "err", err)
+			if errors.Is(err, collector.ErrNoMedium) {
+				slog.Warn("excluding drive, no medium or virtual device", "device", drv.Device)
+				d.deadDrives[drv.Device] = true
+			} else {
+				slog.Warn("drive temp", "device", drv.Device, "err", err)
+			}
 			continue
 		}
 		readings = append(readings, controller.Reading{
-			Name:   "drive:" + d.Device,
+			Name:   "drive:" + drv.Device,
 			Value:  temp,
-			MinVal: d.MinTemp,
-			MaxVal: d.MaxTemp,
+			MinVal: drv.MinTemp,
+			MaxVal: drv.MaxTemp,
 		})
 	}
 

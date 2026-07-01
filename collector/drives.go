@@ -1,12 +1,17 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 )
+
+// ErrNoMedium is returned when the device is virtual or has no medium
+// (e.g. an iDRAC virtual floppy). Callers can treat this as permanent.
+var ErrNoMedium = errors.New("no medium or virtual device")
 
 // DriveTemp returns the temperature in Celsius for the given block device.
 // The smartctl device type is inferred from the device name:
@@ -36,11 +41,15 @@ func smartctlTemp(device string, extra ...string) (float64, error) {
 	args = append(args, device)
 
 	// CombinedOutput captures both stdout and stderr so we can detect
-	// permission errors that smartctl writes to stdout alongside the header.
+	// errors that smartctl writes to stdout alongside the copyright header.
 	out, err := exec.Command("smartctl", args...).CombinedOutput()
+	s := string(out)
 	if err != nil {
-		if len(out) == 0 || strings.Contains(string(out), "Permission denied") {
+		switch {
+		case len(out) == 0 || strings.Contains(s, "Permission denied"):
 			return 0, fmt.Errorf("smartctl %s: permission denied (run as root)", device)
+		case strings.Contains(s, "NO MEDIUM") || strings.Contains(s, "Virtual"):
+			return 0, ErrNoMedium
 		}
 	}
 	return parseSmartTemp(out)

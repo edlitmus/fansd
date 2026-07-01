@@ -88,16 +88,17 @@ max_temp = 50                  # °C → max fan speed
 	return nil
 }
 
-// detectDrives returns base disk device paths on FreeBSD by querying
-// kern.disks via sysctl and filtering to known storage device prefixes.
+// detectDrives returns physical disk device paths on FreeBSD. It queries
+// kern.disks for candidates, then probes each with smartctl to exclude
+// virtual or empty devices (e.g. iDRAC virtual floppy).
 func detectDrives() ([]string, error) {
 	out, err := exec.Command("sysctl", "-n", "kern.disks").Output()
 	if err != nil {
 		return nil, fmt.Errorf("sysctl kern.disks: %w", err)
 	}
 
-	var drives []string
 	seen := map[string]bool{}
+	var candidates []string
 	for _, name := range strings.Fields(string(out)) {
 		if !isStorageDisk(name) {
 			continue
@@ -105,11 +106,31 @@ func detectDrives() ([]string, error) {
 		dev := "/dev/" + name
 		if !seen[dev] {
 			seen[dev] = true
-			drives = append(drives, dev)
+			candidates = append(candidates, dev)
 		}
 	}
-	sort.Strings(drives)
+	sort.Strings(candidates)
+
+	var drives []string
+	for _, dev := range candidates {
+		if !isPhysicalDisk(dev) {
+			fmt.Fprintf(os.Stderr, "skipping %s: virtual device or no medium\n", dev)
+			continue
+		}
+		drives = append(drives, dev)
+	}
 	return drives, nil
+}
+
+// isPhysicalDisk probes the device with smartctl to check whether it is a
+// real disk. When the output positively identifies the device as virtual or
+// reports no medium, the device is excluded. Devices that cannot be opened
+// (e.g. permission denied when not running as root) are assumed to be real
+// and included; they will produce a clear error at runtime.
+func isPhysicalDisk(device string) bool {
+	out, _ := exec.Command("smartctl", "-d", "scsi", "-i", device).CombinedOutput()
+	s := string(out)
+	return !strings.Contains(s, "NO MEDIUM") && !strings.Contains(s, "Virtual")
 }
 
 // isStorageDisk returns true for ATA, SCSI/SAS, and NVMe disk names,
