@@ -1,0 +1,216 @@
+.Dd July 1, 2026
+.Dt FANSD 8
+.Os FreeBSD
+.Sh NAME
+.Nm fansd
+.Nd intelligent fan speed daemon for Dell servers
+.Sh SYNOPSIS
+.Nm
+.Op Fl config Ar file
+.Op Fl debug
+.Nm
+.Fl init-config Ar file | Fl
+.Sh DESCRIPTION
+.Nm
+is a daemon that continuously adjusts fan speed on Dell servers via IPMI.
+It collects CPU temperature, drive temperature, and system load, maps each
+reading to a fan speed percentage using linear interpolation across
+configurable thresholds, and applies the highest resulting speed.
+Speed increases take effect immediately; decreases are gated by a
+hysteresis value to prevent rapid oscillation.
+.Pp
+On receipt of
+.Dv SIGTERM
+or
+.Dv SIGINT ,
+.Nm
+restores BIOS automatic fan control before exiting.
+.Sh OPTIONS
+.Bl -tag -width indent
+.It Fl config Ar file
+Path to the TOML configuration file.
+Defaults to
+.Pa /usr/local/etc/fansd/fansd.toml .
+.It Fl debug
+Enable debug-level structured logging.
+Each poll cycle emits one line per sensor showing the raw reading and
+the computed fan speed.
+.It Fl init-config Ar file | Fl
+Auto-detect hardware and write a starter configuration to
+.Ar file .
+Pass
+.Fl
+to write to standard output.
+Detection includes all storage disks reported by
+.Xr sysctl 8
+.Va kern.disks
+.Pq Cm ada* , da* , nvd* , nda*
+and the number of CPUs for load threshold scaling.
+.Nm
+exits after writing the config; the daemon loop does not start.
+.El
+.Sh CONFIGURATION
+The configuration file uses TOML syntax.
+.Ss [ipmi]
+.Bl -tag -width indent
+.It Va host
+IP address or hostname of the Dell iDRAC.
+.It Va user
+IPMI username.
+.It Va password
+IPMI password.
+.It Va interface
+.Xr ipmitool 1
+interface type.
+Defaults to
+.Cm lanplus .
+.El
+.Ss [fan]
+.Bl -tag -width indent
+.It Va min_speed
+Minimum fan speed as a percentage (0\(en100).
+Default: 10.
+.It Va max_speed
+Maximum fan speed as a percentage (0\(en100).
+Default: 100.
+.It Va poll_interval
+Duration string
+.Pq e.g. Cm 30s , 1m
+controlling how often sensors are sampled.
+Default:
+.Cm 30s .
+.It Va hysteresis
+Fan speed must decrease by at least this many percentage points before
+the lower speed is applied.
+Increases are never gated.
+Default: 5.
+.El
+.Ss [cpu]
+.Bl -tag -width indent
+.It Va enabled
+Enable CPU temperature monitoring.
+Default: true.
+.It Va sensors_cmd
+Path to the
+.Xr sensors 1
+binary.
+Default:
+.Cm sensors .
+Falls back to
+.Xr ipmitool 1
+SDR temperature readings when
+.Cm sensors
+is unavailable or returns no data.
+.It Va min_temp
+CPU temperature in \(deC at which
+.Va fan.min_speed
+applies.
+Default: 50.
+.It Va max_temp
+CPU temperature in \(deC at which
+.Va fan.max_speed
+applies.
+Default: 80.
+.El
+.Ss [load]
+.Bl -tag -width indent
+.It Va enabled
+Enable system load monitoring.
+Default: true.
+.It Va min_load
+Normalized load average
+.Pq load / CPU count
+at which
+.Va fan.min_speed
+applies.
+Default: 1.0.
+.It Va max_load
+Normalized load average at which
+.Va fan.max_speed
+applies.
+Default: 4.0.
+.El
+.Ss [[drives]]
+One section per disk.
+Multiple sections are supported.
+.Bl -tag -width indent
+.It Va device
+Block device path, e.g.\&
+.Pa /dev/da0 .
+.It Va min_temp
+Drive temperature in \(deC at which
+.Va fan.min_speed
+applies.
+.It Va max_temp
+Drive temperature in \(deC at which
+.Va fan.max_speed
+applies.
+.El
+.Sh FAN SPEED CALCULATION
+For each enabled sensor the current reading is linearly interpolated
+between the configured lower and upper bounds:
+.Pp
+.D1 speed = min_speed + (value \- min_val) / (max_val \- min_val) * (max_speed \- min_speed)
+.Pp
+Readings at or below
+.Va min_val
+map to
+.Va fan.min_speed ;
+readings at or above
+.Va max_val
+map to
+.Va fan.max_speed .
+The daemon applies the highest speed returned by any sensor.
+.Sh RC.D INTEGRATION
+Install the bundled service script:
+.Bd -literal -offset indent
+install -m 555 rc.d/fansd /usr/local/etc/rc.d/fansd
+.Ed
+.Pp
+Enable the service in
+.Pa /etc/rc.conf :
+.Bd -literal -offset indent
+fansd_enable="YES"
+fansd_config="/usr/local/etc/fansd/fansd.toml"   # optional
+fansd_flags="-debug"                              # optional
+.Ed
+.Pp
+The rc.d script uses
+.Xr daemon 8
+with automatic restart
+.Pq Fl r .
+.Sh FILES
+.Bl -tag -width indent
+.It Pa /usr/local/etc/fansd/fansd.toml
+Default configuration file.
+.It Pa /var/run/fansd.pid
+PID file written by
+.Xr daemon 8 .
+.It Pa /usr/local/etc/rc.d/fansd
+rc.d service script.
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh EXAMPLES
+Generate a starter config from detected hardware and write it to stdout:
+.Bd -literal -offset indent
+fansd -init-config -
+.Ed
+.Pp
+Write the generated config directly to the default location:
+.Bd -literal -offset indent
+fansd -init-config /usr/local/etc/fansd/fansd.toml
+.Ed
+.Pp
+Run in the foreground with debug logging:
+.Bd -literal -offset indent
+fansd -config /usr/local/etc/fansd/fansd.toml -debug
+.Ed
+.Sh SEE ALSO
+.Xr ipmitool 1 ,
+.Xr sensors 1 ,
+.Xr smartctl 8 ,
+.Xr daemon 8 ,
+.Xr rc.conf 5
+.Sh AUTHORS
+.An Ed Silva Aq Mt ed@gnzo.org
