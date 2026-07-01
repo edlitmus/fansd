@@ -7,40 +7,62 @@ import (
 	"strings"
 )
 
-// DriveTemp returns the temperature in Celsius for the given block device
-// by parsing `smartctl -A` output.
+// DriveTemp returns the temperature in Celsius for the given block device.
+// It tries auto-detection first, then retries with an explicit SCSI device
+// type for SAS/SCSI drives that smartctl cannot auto-identify.
 func DriveTemp(device string) (float64, error) {
-	out, err := exec.Command("smartctl", "-A", device).Output()
-	if err != nil {
-		// smartctl exits non-zero when the drive has warnings but still outputs data.
-		// Only treat it as a hard error when there's no output at all.
-		if len(out) == 0 {
-			return 0, fmt.Errorf("smartctl %s: %w", device, err)
-		}
+	if t, err := smartctlTemp(device); err == nil {
+		return t, nil
 	}
+	// Retry with explicit SCSI type — needed for SAS drives on some HBAs.
+	if t, err := smartctlTemp(device, "-d", "scsi"); err == nil {
+		return t, nil
+	}
+	return 0, fmt.Errorf("smartctl %s: no temperature found", device)
+}
 
+func smartctlTemp(device string, extra ...string) (float64, error) {
+	args := append([]string{"-A"}, extra...)
+	args = append(args, device)
+	out, err := exec.Command("smartctl", args...).Output()
+	// smartctl exits non-zero for warnings but still writes useful output.
+	// Only bail when there is truly no output.
+	if err != nil && len(out) == 0 {
+		return 0, fmt.Errorf("%w", err)
+	}
+	return parseSmartTemp(out)
+}
+
+// parseSmartTemp handles both ATA and SCSI/SAS output formats from smartctl -A.
+func parseSmartTemp(out []byte) (float64, error) {
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
-		// SMART attribute line format (ATA):
-		// ID# ATTRIBUTE_NAME FLAG VALUE WORST THRESH TYPE UPDATED WHEN_FAILED RAW_VALUE
-		// Attribute 194 is Temperature_Celsius; 190 is Airflow_Temperature_Cel.
-		if len(fields) < 10 {
-			continue
-		}
-		id := fields[0]
-		if id != "194" && id != "190" {
-			continue
-		}
-		// RAW_VALUE is the last field and holds the actual temperature.
-		raw := fields[len(fields)-1]
-		// Some drives report "22 (Min/Max 18/26)" — take just the first number.
-		rawNum := strings.Fields(raw)[0]
-		f, err := strconv.ParseFloat(rawNum, 64)
-		if err != nil {
-			continue
-		}
-		return f, nil
-	}
 
-	return 0, fmt.Errorf("smartctl %s: temperature attribute not found", device)
+		// ATA format: "194 Temperature_Celsius 0x0022 … 35" (10+ fields)
+		// Attribute 190 is Airflow_Temperature_Cel on some drives.
+		if len(fields) >= 10 {
+			if fields[0] == "194" || fields[0] == "190" {
+				// RAW_VALUE is the last field; may be "22 (Min/Max 18/26)"
+				raw := strings.Fields(fields[len(fields)-1])[0]
+				if f, err := strconv.ParseFloat(raw, 64); err == nil {
+					return f, nil
+				}
+			}
+		}
+
+		// SCSI/SAS format: "Current Drive Temperature:     35 C"
+		// NVMe format:     "Temperature:                   35 Celsius"
+		// SAS log page:    "          Current Temperature:   35 Celsius"
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "current drive temperature") ||
+			strings.Contains(lower, "current temperature") ||
+			strings.HasPrefix(strings.TrimSpace(lower), "temperature:") {
+			for _, f := range fields {
+				if v, err := strconv.ParseFloat(f, 64); err == nil && v > 0 && v < 200 {
+					return v, nil
+				}
+			}
+		}
+	}
+	return 0, fmt.Errorf("temperature not found")
 }
