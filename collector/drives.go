@@ -55,6 +55,70 @@ func smartctlTemp(device string, extra ...string) (float64, error) {
 	return parseSmartTemp(out)
 }
 
+// DriveThresholds holds the temperature limits reported by the drive itself.
+type DriveThresholds struct {
+	// TripTemp is the manufacturer's thermal limit in °C (SCSI "Drive Trip
+	// Temperature" or the max from ATA attribute 194's raw min/max field).
+	// Zero means the drive did not report a value.
+	TripTemp float64
+}
+
+// ProbeDriveThresholds queries a drive for its built-in temperature limits.
+// It uses the same device-type inference as DriveTemp.
+func ProbeDriveThresholds(device string) (DriveThresholds, error) {
+	base := filepath.Base(device)
+	var args []string
+	if strings.HasPrefix(base, "da") {
+		args = []string{"-d", "scsi", "-a", device}
+	} else {
+		args = []string{"-a", device}
+	}
+
+	out, err := exec.Command("smartctl", args...).CombinedOutput()
+	s := string(out)
+	if err != nil {
+		if len(out) == 0 || strings.Contains(s, "Permission denied") {
+			return DriveThresholds{}, fmt.Errorf("smartctl %s: permission denied", device)
+		}
+		if strings.Contains(s, "NO MEDIUM") || strings.Contains(s, "Virtual") {
+			return DriveThresholds{}, ErrNoMedium
+		}
+	}
+	return parseDriveThresholds(out), nil
+}
+
+func parseDriveThresholds(out []byte) DriveThresholds {
+	var dt DriveThresholds
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		lower := strings.ToLower(line)
+
+		// SCSI/SAS: "Drive Trip Temperature:        60 C"
+		if strings.Contains(lower, "drive trip temperature") {
+			for _, f := range fields {
+				if v, err := strconv.ParseFloat(f, 64); err == nil && v > 0 && v < 200 {
+					dt.TripTemp = v
+					return dt
+				}
+			}
+		}
+
+		// ATA attribute 194 raw value: "35 (Min/Max 18/53)" — use the max.
+		if len(fields) >= 10 && (fields[0] == "194" || fields[0] == "190") {
+			raw := fields[len(fields)-1]
+			if idx := strings.Index(raw, "/"); idx != -1 {
+				// raw looks like "18/53)" — take the part after the slash
+				maxStr := strings.TrimRight(raw[idx+1:], ")")
+				if v, err := strconv.ParseFloat(maxStr, 64); err == nil && v > 0 {
+					dt.TripTemp = v
+					return dt
+				}
+			}
+		}
+	}
+	return dt
+}
+
 // parseSmartTemp handles both ATA and SCSI/SAS output formats from smartctl -A.
 func parseSmartTemp(out []byte) (float64, error) {
 	for _, line := range strings.Split(string(out), "\n") {

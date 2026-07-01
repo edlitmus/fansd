@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+
+	"fansd/collector"
 )
 
 // runInitConfig auto-detects hardware and writes a starter fansd.toml to
@@ -72,16 +74,17 @@ max_load = %.1f
 # [[drives]]
 # device   = "/dev/da0"
 # min_temp = 35
-# max_temp = 50
+# max_temp = 55
 `)
 	} else {
 		for _, dev := range drives {
+			minTemp, maxTemp := driveTemps(dev)
 			fmt.Fprintf(out, `
 [[drives]]
 device   = "%s"
-min_temp = 35                  # °C → min fan speed
-max_temp = 50                  # °C → max fan speed
-`, dev)
+min_temp = %d                  # °C → min fan speed
+max_temp = %d                  # °C → max fan speed
+`, dev, minTemp, maxTemp)
 		}
 	}
 
@@ -148,6 +151,19 @@ func isStorageDisk(name string) bool {
 		}
 	}
 	return false
+}
+
+// driveTemps returns (min_temp, max_temp) for a drive config entry.
+// If the drive reports a trip temperature, max_temp is set 5°C below it and
+// min_temp is set 15°C below max_temp. Falls back to safe defaults otherwise.
+func driveTemps(device string) (minTemp, maxTemp int) {
+	dt, err := collector.ProbeDriveThresholds(device)
+	if err == nil && dt.TripTemp > 0 {
+		maxTemp = int(dt.TripTemp) - 5
+		minTemp = maxTemp - 15
+		return
+	}
+	return 35, 55
 }
 
 func commandExists(name string) bool {
