@@ -43,6 +43,8 @@ func runInitConfig(outPath string) error {
 		sensorsNote = "  # WARNING: 'sensors' not found in PATH; will fall back to ipmitool sdr\n"
 	}
 
+	cpuMinTemp, cpuMaxTemp := cpuTemps()
+
 	fmt.Fprintf(out, `[ipmi]
 host      = "CHANGEME"         # iDRAC IP or hostname
 user      = "root"
@@ -58,15 +60,15 @@ hysteresis    = 5              # only decrease speed when delta exceeds this (%%
 [cpu]
 enabled     = true
 %ssensors_cmd = "sensors"
-min_temp    = 50               # °C → min fan speed
-max_temp    = 80               # °C → max fan speed
+min_temp    = %d               # °C → min fan speed
+max_temp    = %d               # °C → max fan speed
 
 [load]
 enabled  = true
 # host has %d CPU(s); thresholds set to 75%% / 200%% aggregate utilization
 min_load = %.1f
 max_load = %.1f
-`, sensorsNote, cpus, minLoad, maxLoad)
+`, sensorsNote, cpuMinTemp, cpuMaxTemp, cpus, minLoad, maxLoad)
 
 	if len(drives) == 0 {
 		fmt.Fprintf(out, `
@@ -151,6 +153,23 @@ func isStorageDisk(name string) bool {
 		}
 	}
 	return false
+}
+
+// cpuTemps returns (min_temp, max_temp) for the [cpu] config section.
+// It reads TjMax from dev.cpu.N.coretemp.tjmax / amdtemp.tjmax and derives:
+//
+//	max_temp = TjMax - 5   (full fan speed 5°C below hardware limit)
+//	min_temp = max_temp - 30  (start ramping 30°C before that)
+//
+// Falls back to 50/80 when TjMax is unavailable.
+func cpuTemps() (minTemp, maxTemp int) {
+	tjmax, err := collector.SysctlCPUTjMax()
+	if err == nil && tjmax > 0 {
+		maxTemp = int(tjmax) - 5
+		minTemp = maxTemp - 30
+		return
+	}
+	return 50, 80
 }
 
 // driveTemps returns (min_temp, max_temp) for a drive config entry.
