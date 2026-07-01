@@ -9,10 +9,13 @@ import (
 )
 
 // CPUTemp returns the highest CPU core temperature in Celsius.
-// It tries lm-sensors first, falls back to ipmitool sdr.
+// Sources are tried in order: FreeBSD sysctl (dev.cpu.N.temperature),
+// lm-sensors, ipmitool sdr.
 func CPUTemp(sensorsCmd, ipmiHost, ipmiUser, ipmiPass, ipmiIface string) (float64, error) {
-	t, err := cpuTempFromSensors(sensorsCmd)
-	if err == nil {
+	if t, err := SysctlCPUTemp(); err == nil {
+		return t, nil
+	}
+	if t, err := cpuTempFromSensors(sensorsCmd); err == nil {
 		return t, nil
 	}
 	return cpuTempFromIPMI(ipmiHost, ipmiUser, ipmiPass, ipmiIface)
