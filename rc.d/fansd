@@ -1,0 +1,30 @@
+#!/bin/sh
+#
+# PROVIDE: fansd
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="fansd"
+desc="Fan speed daemon"
+rcvar="fansd_enable"
+command="/usr/local/sbin/${name}"
+pidfile="/var/run/${name}.pid"
+
+start_cmd="${name}_start"
+
+load_rc_config "${name}"
+
+: ${fansd_enable:=NO}
+: ${fansd_config:="/usr/local/etc/fansd/fansd.toml"}
+: ${fansd_flags:=""}
+
+fansd_start()
+{
+    /usr/sbin/daemon -P "${pidfile}" -r -f \
+        "${command}" -config "${fansd_config}" ${fansd_flags}
+    echo "${name} started."
+}
+
+run_rc_command "$1"

@@ -16,7 +16,16 @@ import (
 func main() {
 	cfgPath := flag.String("config", "/usr/local/etc/fansd/fansd.toml", "path to config file")
 	debug := flag.Bool("debug", false, "enable debug logging")
+	initCfg := flag.String("init-config", "", "auto-detect hardware and write a starter config to this path (use - for stdout)")
 	flag.Parse()
+
+	if *initCfg != "" {
+		if err := runInitConfig(*initCfg); err != nil {
+			slog.Error("init-config", "err", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	level := slog.LevelInfo
 	if *debug {
