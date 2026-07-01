@@ -14,11 +14,8 @@ import (
 var ErrNoMedium = errors.New("no medium or virtual device")
 
 // DriveTemp returns the temperature in Celsius for the given block device.
-// The smartctl device type is inferred from the device name:
-//   - ada*        → ATA/SATA, auto-detect
-//   - da*         → SCSI/SAS, explicit -d scsi
-//   - nvd*, nda*  → NVMe, auto-detect
-//   - anything else → auto-detect, then -d scsi fallback
+// For da* devices (which may be SAS or SATA-on-HBA), auto-detection is
+// tried first; -d scsi is used as a fallback for native SAS drives.
 func DriveTemp(device string) (float64, error) {
 	base := filepath.Base(device)
 	switch {
@@ -27,6 +24,10 @@ func DriveTemp(device string) (float64, error) {
 		strings.HasPrefix(base, "nda"):
 		return smartctlTemp(device)
 	case strings.HasPrefix(base, "da"):
+		// da* can be SAS or SATA-behind-HBA; try auto-detect first.
+		if t, err := smartctlTemp(device); err == nil {
+			return t, nil
+		}
 		return smartctlTemp(device, "-d", "scsi")
 	default:
 		if t, err := smartctlTemp(device); err == nil {
@@ -57,59 +58,54 @@ func smartctlTemp(device string, extra ...string) (float64, error) {
 
 // DriveThresholds holds the temperature limits reported by the drive itself.
 type DriveThresholds struct {
-	// TripTemp is the manufacturer's thermal limit in °C (SCSI "Drive Trip
-	// Temperature" or the max from ATA attribute 194's raw min/max field).
-	// Zero means the drive did not report a value.
+	// TripTemp is the manufacturer's thermal limit in °C. Currently populated
+	// only for SCSI/SAS drives via "Drive Trip Temperature". Zero means the
+	// drive did not report a value and the caller should use defaults.
 	TripTemp float64
 }
 
 // ProbeDriveThresholds queries a drive for its built-in temperature limits.
-// It uses the same device-type inference as DriveTemp.
+// It uses the same device-type detection as DriveTemp.
 func ProbeDriveThresholds(device string) (DriveThresholds, error) {
 	base := filepath.Base(device)
-	var args []string
-	if strings.HasPrefix(base, "da") {
-		args = []string{"-d", "scsi", "-a", device}
-	} else {
-		args = []string{"-a", device}
+
+	probe := func(extra ...string) (DriveThresholds, error) {
+		args := append([]string{"-a"}, extra...)
+		args = append(args, device)
+		out, err := exec.Command("smartctl", args...).CombinedOutput()
+		s := string(out)
+		if err != nil {
+			if len(out) == 0 || strings.Contains(s, "Permission denied") {
+				return DriveThresholds{}, fmt.Errorf("smartctl %s: permission denied", device)
+			}
+			if strings.Contains(s, "NO MEDIUM") || strings.Contains(s, "Virtual") {
+				return DriveThresholds{}, ErrNoMedium
+			}
+		}
+		return parseDriveThresholds(out), nil
 	}
 
-	out, err := exec.Command("smartctl", args...).CombinedOutput()
-	s := string(out)
-	if err != nil {
-		if len(out) == 0 || strings.Contains(s, "Permission denied") {
-			return DriveThresholds{}, fmt.Errorf("smartctl %s: permission denied", device)
+	if strings.HasPrefix(base, "da") {
+		// Try auto-detect first (covers SATA-behind-HBA); fall back to scsi.
+		if dt, err := probe(); err == nil {
+			return dt, nil
 		}
-		if strings.Contains(s, "NO MEDIUM") || strings.Contains(s, "Virtual") {
-			return DriveThresholds{}, ErrNoMedium
-		}
+		return probe("-d", "scsi")
 	}
-	return parseDriveThresholds(out), nil
+	return probe()
 }
 
+// parseDriveThresholds extracts the manufacturer thermal limit from smartctl
+// output. Only SCSI/SAS "Drive Trip Temperature" is used; ATA drives do not
+// expose a reliable trip temperature via SMART attributes and will return a
+// zero TripTemp, causing the caller to fall back to defaults.
 func parseDriveThresholds(out []byte) DriveThresholds {
 	var dt DriveThresholds
 	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		lower := strings.ToLower(line)
-
 		// SCSI/SAS: "Drive Trip Temperature:        60 C"
-		if strings.Contains(lower, "drive trip temperature") {
-			for _, f := range fields {
+		if strings.Contains(strings.ToLower(line), "drive trip temperature") {
+			for _, f := range strings.Fields(line) {
 				if v, err := strconv.ParseFloat(f, 64); err == nil && v > 0 && v < 200 {
-					dt.TripTemp = v
-					return dt
-				}
-			}
-		}
-
-		// ATA attribute 194 raw value: "35 (Min/Max 18/53)" — use the max.
-		if len(fields) >= 10 && (fields[0] == "194" || fields[0] == "190") {
-			raw := fields[len(fields)-1]
-			if idx := strings.Index(raw, "/"); idx != -1 {
-				// raw looks like "18/53)" — take the part after the slash
-				maxStr := strings.TrimRight(raw[idx+1:], ")")
-				if v, err := strconv.ParseFloat(maxStr, 64); err == nil && v > 0 {
 					dt.TripTemp = v
 					return dt
 				}
@@ -124,15 +120,15 @@ func parseSmartTemp(out []byte) (float64, error) {
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
 
-		// ATA format: "194 Temperature_Celsius 0x0022 … 35" (10+ fields)
-		// Attribute 190 is Airflow_Temperature_Cel on some drives.
-		if len(fields) >= 10 {
-			if fields[0] == "194" || fields[0] == "190" {
-				// RAW_VALUE is the last field; may be "22 (Min/Max 18/26)"
-				raw := strings.Fields(fields[len(fields)-1])[0]
-				if f, err := strconv.ParseFloat(raw, 64); err == nil {
-					return f, nil
-				}
+		// ATA SMART attribute table format (10 fixed columns):
+		//   ID# ATTR_NAME FLAG VALUE WORST THRESH TYPE UPDATED WHEN_FAILED RAW_VALUE [extra...]
+		// fields[9] is always the base RAW_VALUE; extra tokens (parenthesized
+		// data like "(Min/Max 31/46)" or "(0 22 0 0 0)") appear as additional
+		// fields and must be ignored.
+		// Attribute 194 = Temperature_Celsius, 190 = Airflow_Temperature_Cel.
+		if len(fields) >= 10 && (fields[0] == "194" || fields[0] == "190") {
+			if f, err := strconv.ParseFloat(fields[9], 64); err == nil {
+				return f, nil
 			}
 		}
 
