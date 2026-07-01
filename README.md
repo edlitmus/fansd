@@ -1,16 +1,16 @@
 # fansd
 
 A Go daemon for intelligent fan speed control on Dell servers via IPMI.
-It reads CPU temperature (lm-sensors with ipmitool fallback), drive
-temperature (SMART), and system load, then continuously adjusts fan speed
-using linear interpolation across configurable thresholds.  Speed increases
-are applied immediately; decreases are gated by a hysteresis value to prevent
-rapid oscillation.  On shutdown the BIOS automatic fan control is restored.
+It reads CPU temperature, drive temperature, and system load, then
+continuously adjusts fan speed using linear interpolation across configurable
+thresholds.  Speed increases are applied immediately; decreases are gated by a
+hysteresis value to prevent rapid oscillation.  On shutdown the BIOS automatic
+fan control is restored.
 
 ## Features
 
-- CPU temperature via `sensors` (falls back to `ipmitool sdr`)
-- Drive temperature via `smartctl` (SMART attribute 194/190)
+- CPU temperature via FreeBSD sysctl (`dev.cpu.N.temperature`), then `sensors`, then `ipmitool sdr`
+- Drive temperature via `smartctl` (ATA attribute 194/190; SCSI/SAS formats also supported)
 - System load average normalized by CPU count
 - Per-sensor linear interpolation — the hottest sensor wins
 - Configurable hysteresis to avoid fan hunting
@@ -23,12 +23,20 @@ rapid oscillation.  On shutdown the BIOS automatic fan control is restored.
 |---|---|
 | `ipmitool` | Fan control and IPMI temperature fallback |
 | `smartctl` | Drive temperature (SMART) |
-| `sensors` | CPU temperature (optional, falls back to ipmitool) |
+| `sensors` | CPU temperature fallback (optional) |
 
-On FreeBSD:
+`sensors` and `ipmitool sdr` are only used for CPU temperature when the
+FreeBSD `coretemp`/`amdtemp` kernel module is not loaded.  On a typical
+FreeBSD host only `ipmitool` and `smartctl` are required:
 
 ```sh
-pkg install ipmitool smartmontools lm-sensors
+pkg install ipmitool smartmontools
+```
+
+To also enable the `sensors` fallback:
+
+```sh
+pkg install lm-sensors
 ```
 
 ## Building

@@ -19,6 +19,22 @@ configurable thresholds, and applies the highest resulting speed.
 Speed increases take effect immediately; decreases are gated by a
 hysteresis value to prevent rapid oscillation.
 .Pp
+CPU temperature is read from the
+.Va dev.cpu.N.temperature
+sysctls provided by the
+.Xr coretemp 4
+or
+.Xr amdtemp 4
+kernel module.
+If those OIDs are absent,
+.Nm
+falls back to
+.Xr sensors 1
+.Pq lm-sensors
+and then to
+.Xr ipmitool 1
+SDR readings.
+.Pp
 On receipt of
 .Dv SIGTERM
 or
@@ -93,14 +109,22 @@ Default: true.
 .It Va sensors_cmd
 Path to the
 .Xr sensors 1
-binary.
+binary used as the second-priority CPU temperature source.
 Default:
 .Cm sensors .
-Falls back to
+The priority order is:
+.Bl -enum -compact
+.It
+.Va dev.cpu.N.temperature
+sysctls
+.Pq Xr coretemp 4 No / Xr amdtemp 4
+.It
+.Xr sensors 1
+.Pq lm-sensors
+.It
 .Xr ipmitool 1
-SDR temperature readings when
-.Cm sensors
-is unavailable or returns no data.
+SDR temperature readings
+.El
 .It Va min_temp
 CPU temperature in \(deC at which
 .Va fan.min_speed
