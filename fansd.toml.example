@@ -1,0 +1,33 @@
+[ipmi]
+host      = "192.168.1.100"   # iDRAC IP or hostname
+user      = "root"
+password  = "calvin"
+interface = "lanplus"          # lanplus for remote IPMI over LAN
+
+[fan]
+min_speed     = 10             # minimum fan speed (%)
+max_speed     = 100            # maximum fan speed (%)
+poll_interval = "30s"          # how often to sample and adjust
+hysteresis    = 5              # only decrease speed when delta exceeds this (%)
+
+[cpu]
+enabled     = true
+sensors_cmd = "sensors"        # path to lm-sensors binary if not in PATH
+min_temp    = 50               # °C → min fan speed
+max_temp    = 80               # °C → max fan speed
+
+[load]
+enabled  = true
+min_load = 1.0                 # normalized load per core → min fan speed
+max_load = 4.0                 # normalized load per core → max fan speed
+
+# Add one [[drives]] section per disk to monitor.
+[[drives]]
+device   = "/dev/ada0"
+min_temp = 35                  # °C → min fan speed
+max_temp = 50                  # °C → max fan speed
+
+[[drives]]
+device   = "/dev/ada1"
+min_temp = 35
+max_temp = 50
