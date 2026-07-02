@@ -2,6 +2,7 @@ package ipmi
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 )
 
@@ -46,8 +47,12 @@ func (c *Client) EnableAutoFan() error {
 }
 
 func (c *Client) run(args ...string) error {
-	base := []string{"-I", c.iface, "-H", c.host, "-U", c.user, "-P", c.pass}
+	// Pass the password via the IPMI_PASSWORD environment variable (-E) rather
+	// than -P on the command line, which would expose it to any local user via
+	// ps(1) / procfs. FreeBSD does not reveal another user's environment.
+	base := []string{"-I", c.iface, "-H", c.host, "-U", c.user, "-E"}
 	cmd := exec.Command("ipmitool", append(base, args...)...)
+	cmd.Env = append(os.Environ(), "IPMI_PASSWORD="+c.pass)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, out)

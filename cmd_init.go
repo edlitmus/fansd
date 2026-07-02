@@ -29,7 +29,8 @@ func runInitConfig(outPath string) error {
 
 	out := os.Stdout
 	if outPath != "" && outPath != "-" {
-		f, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0640)
+		// 0600: the config holds the IPMI password, so keep it owner-only.
+		f, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
 		if err != nil {
 			return fmt.Errorf("open output: %w", err)
 		}

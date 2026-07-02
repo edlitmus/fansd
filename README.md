@@ -167,6 +167,19 @@ The service uses `daemon(8)` with `-r` for automatic restart on crash.
 On `service fansd stop` the daemon restores BIOS automatic fan control
 before exiting.
 
+## Security notes
+
+- The IPMI password is passed to `ipmitool` through the `IPMI_PASSWORD`
+  environment variable (`-E`), not as a `-P` command-line argument, so it is
+  not exposed to other local users via `ps`.
+- The config file contains the IPMI password in plaintext. `-init-config`
+  creates it with mode `0600`; keep it owner-only readable if you write it
+  by hand (`chmod 600`).
+- The Prometheus endpoint is unauthenticated and exposes only non-sensitive
+  telemetry (temperatures, load, fan speed). Bind `listen` to a trusted
+  interface (e.g. `127.0.0.1:9105`) rather than all interfaces if the host is
+  on an untrusted network.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

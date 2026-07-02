@@ -3,6 +3,7 @@ package collector
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -74,10 +75,14 @@ func cpuTempFromSensors(cmd string) (float64, error) {
 }
 
 func cpuTempFromIPMI(host, user, pass, iface string) (float64, error) {
-	out, err := exec.Command(
-		"ipmitool", "-I", iface, "-H", host, "-U", user, "-P", pass,
+	// Use -E (IPMI_PASSWORD env var) instead of -P so the password is not
+	// visible in the process argument list to other local users.
+	cmd := exec.Command(
+		"ipmitool", "-I", iface, "-H", host, "-U", user, "-E",
 		"sdr", "type", "Temperature",
-	).Output()
+	)
+	cmd.Env = append(os.Environ(), "IPMI_PASSWORD="+pass)
+	out, err := cmd.Output()
 	if err != nil {
 		return 0, fmt.Errorf("ipmitool sdr: %w", err)
 	}

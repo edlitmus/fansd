@@ -48,7 +48,11 @@ func main() {
 	if cfg.Prometheus.Enabled {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", store)
-		srv := &http.Server{Addr: cfg.Prometheus.Listen, Handler: mux}
+		srv := &http.Server{
+			Addr:              cfg.Prometheus.Listen,
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
 		go func() {
 			slog.Info("prometheus metrics", "listen", cfg.Prometheus.Listen)
 			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
