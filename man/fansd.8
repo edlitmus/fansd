@@ -278,7 +278,17 @@ fansd_flags="-debug"                              # optional
 The rc.d script uses
 .Xr daemon 8
 with automatic restart
-.Pq Fl r .
+.Pq Fl r
+and syslog output
+.Pq Fl S .
+Log messages, including
+.Fl debug
+output, are sent to the
+.Cm daemon
+facility tagged
+.Cm fansd ,
+typically appearing in
+.Pa /var/log/daemon.log .
 .Sh FILES
 .Bl -tag -width indent
 .It Pa /usr/local/etc/fansd/fansd.toml

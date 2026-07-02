@@ -22,7 +22,7 @@ load_rc_config "${name}"
 
 fansd_start()
 {
-    /usr/sbin/daemon -P "${pidfile}" -r -f \
+    /usr/sbin/daemon -P "${pidfile}" -r -f -S \
         "${command}" -config "${fansd_config}" ${fansd_flags}
     echo "${name} started."
 }

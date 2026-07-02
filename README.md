@@ -163,7 +163,10 @@ echo 'fansd_flags="-debug"' >> /etc/rc.conf
 service fansd start
 ```
 
-The service uses `daemon(8)` with `-r` for automatic restart on crash.
+The service uses `daemon(8)` with `-r` for automatic restart on crash and
+`-S` to send fansd's log output (including `-debug`) to syslog, where it
+appears under the `daemon` facility tagged `fansd` — typically in
+`/var/log/daemon.log`.
 On `service fansd stop` the daemon restores BIOS automatic fan control
 before exiting.
 
