@@ -11,7 +11,9 @@ BINARY   = fansd
 all: build
 
 build:
-	go build -o $(BINARY) .
+	# -buildvcs=false: allows building as root in a user-owned checkout,
+	# where git's ownership check would otherwise fail VCS stamping
+	go build -buildvcs=false -o $(BINARY) .
 
 install: build
 	install -d $(DESTDIR)$(SBINDIR) $(DESTDIR)$(RCDIR) \
