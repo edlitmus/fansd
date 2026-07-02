@@ -8,11 +8,17 @@ import (
 )
 
 type Config struct {
-	IPMI   IPMIConfig    `toml:"ipmi"`
-	Fan    FanConfig     `toml:"fan"`
-	CPU    CPUConfig     `toml:"cpu"`
-	Load   LoadConfig    `toml:"load"`
-	Drives []DriveConfig `toml:"drives"`
+	IPMI       IPMIConfig       `toml:"ipmi"`
+	Fan        FanConfig        `toml:"fan"`
+	CPU        CPUConfig        `toml:"cpu"`
+	Load       LoadConfig       `toml:"load"`
+	Drives     []DriveConfig    `toml:"drives"`
+	Prometheus PrometheusConfig `toml:"prometheus"`
+}
+
+type PrometheusConfig struct {
+	Enabled bool   `toml:"enabled"`
+	Listen  string `toml:"listen"`
 }
 
 type IPMIConfig struct {
@@ -91,6 +97,9 @@ func defaultConfig() *Config {
 			Enabled: true,
 			MinLoad: 1.0,
 			MaxLoad: 4.0,
+		},
+		Prometheus: PrometheusConfig{
+			Listen: ":9105",
 		},
 	}
 }

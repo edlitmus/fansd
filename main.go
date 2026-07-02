@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,6 +13,7 @@ import (
 	"fansd/collector"
 	"fansd/controller"
 	"fansd/ipmi"
+	"fansd/metrics"
 )
 
 func main() {
@@ -40,7 +42,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	d := newDaemon(cfg)
+	store := metrics.New()
+	d := newDaemon(cfg, store)
+
+	if cfg.Prometheus.Enabled {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", store)
+		srv := &http.Server{Addr: cfg.Prometheus.Listen, Handler: mux}
+		go func() {
+			slog.Info("prometheus metrics", "listen", cfg.Prometheus.Listen)
+			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Error("metrics server", "err", err)
+			}
+		}()
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -73,14 +88,16 @@ type daemon struct {
 	ipmiClient *ipmi.Client
 	fanCtrl    *controller.FanController
 	deadDrives map[string]bool
+	metrics    *metrics.Store
 }
 
-func newDaemon(cfg *Config) *daemon {
+func newDaemon(cfg *Config, store *metrics.Store) *daemon {
 	return &daemon{
 		cfg:        cfg,
 		ipmiClient: ipmi.NewClient(cfg.IPMI.Host, cfg.IPMI.User, cfg.IPMI.Password, cfg.IPMI.Interface),
 		fanCtrl:    controller.NewFanController(cfg.Fan.MinSpeed, cfg.Fan.MaxSpeed, cfg.Fan.Hysteresis),
 		deadDrives: make(map[string]bool),
+		metrics:    store,
 	}
 }
 
@@ -96,6 +113,8 @@ func (d *daemon) runCycle() {
 		slog.Error("compute fan speed", "err", err)
 		return
 	}
+
+	d.metrics.SetFanSpeed(float64(speed))
 
 	if !changed {
 		slog.Debug("fan speed unchanged", "speed", speed)
@@ -119,6 +138,7 @@ func (d *daemon) collectReadings() []controller.Reading {
 		if err != nil {
 			slog.Warn("cpu temp", "err", err)
 		} else {
+			d.metrics.SetCPUTemp(temp)
 			readings = append(readings, controller.Reading{
 				Name:   "cpu",
 				Value:  temp,
@@ -133,6 +153,7 @@ func (d *daemon) collectReadings() []controller.Reading {
 		if err != nil {
 			slog.Warn("system load", "err", err)
 		} else {
+			d.metrics.SetLoad(load)
 			readings = append(readings, controller.Reading{
 				Name:   "load",
 				Value:  load,
@@ -156,6 +177,7 @@ func (d *daemon) collectReadings() []controller.Reading {
 			}
 			continue
 		}
+		d.metrics.SetDriveTemp(drv.Device, temp)
 		readings = append(readings, controller.Reading{
 			Name:   "drive:" + drv.Device,
 			Value:  temp,

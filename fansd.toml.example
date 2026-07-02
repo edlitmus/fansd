@@ -21,6 +21,10 @@ enabled  = true
 min_load = 1.0                 # normalized load per core → min fan speed
 max_load = 4.0                 # normalized load per core → max fan speed
 
+[prometheus]
+enabled = false                # set to true to expose /metrics
+listen  = ":9105"             # address:port to listen on
+
 # Add one [[drives]] section per disk to monitor.
 [[drives]]
 device   = "/dev/ada0"
