@@ -15,6 +15,7 @@ fan control is restored.
 - Per-sensor linear interpolation — the hottest sensor wins
 - Configurable hysteresis to avoid fan hunting
 - `-init-config` probes CPU TjMax and drive trip temperatures to derive thresholds automatically
+- Prometheus metrics endpoint (`/metrics`) for CPU temp, drive temps, load, and fan speed
 - FreeBSD rc.d service script included
 
 ## Requirements
@@ -101,6 +102,10 @@ max_temp = 55
 device   = "/dev/da1"
 min_temp = 40
 max_temp = 55
+
+[prometheus]
+enabled = false                # set to true to expose /metrics
+listen  = ":9105"             # address:port to listen on
 ```
 
 ### Fan speed calculation
@@ -112,10 +117,27 @@ below the lower bound map to `min_speed`; values at or above the upper bound
 map to `max_speed`.  The final fan speed is the **maximum** across all
 sensors.
 
+## Prometheus metrics
+
+When `prometheus.enabled = true`, fansd serves Prometheus text-format gauges at
+`http://<listen>/metrics`:
+
+| Metric | Labels | Description |
+|---|---|---|
+| `fansd_cpu_temperature_celsius` | — | Current CPU temperature in °C |
+| `fansd_system_load_normalized` | — | 1-minute load average divided by CPU count |
+| `fansd_fan_speed_percent` | — | Current IPMI fan speed target (%) |
+| `fansd_drive_temperature_celsius` | `device` | Per-drive temperature in °C |
+
+Metrics whose collectors failed during the most recent poll cycle are omitted
+rather than reported as zero, so Prometheus can distinguish a missing read from
+a genuinely cold sensor.
+
 ## Usage
 
 ```
-fansd [-config path] [-debug] [-init-config path|-]
+fansd [-config path] [-debug]
+fansd -init-config path|-
 ```
 
 | Flag | Default | Description |

@@ -35,6 +35,15 @@ and then to
 .Xr ipmitool 1
 SDR readings.
 .Pp
+When
+.Va prometheus.enabled
+is set to true,
+.Nm
+also serves Prometheus text-format gauges at
+.Pa /metrics
+on the configured listen address
+.Pq default Li :9105 .
+.Pp
 On receipt of
 .Dv SIGTERM
 or
@@ -210,6 +219,33 @@ Drive temperature in \(deC at which
 .Va fan.max_speed
 applies.
 .El
+.Ss [prometheus]
+.Bl -tag -width indent
+.It Va enabled
+Expose a Prometheus metrics endpoint.
+Default: false.
+.It Va listen
+Address and port for the metrics HTTP server.
+Default:
+.Cm :9105 .
+.El
+.Pp
+The following gauges are served at
+.Pa /metrics
+in Prometheus text exposition format:
+.Bl -tag -width fansd_drive_temperature_celsius
+.It Li fansd_cpu_temperature_celsius
+Current CPU temperature in \(deC.
+.It Li fansd_system_load_normalized
+One-minute load average divided by CPU count.
+.It Li fansd_fan_speed_percent
+Current IPMI fan speed target as a percentage.
+.It Li fansd_drive_temperature_celsius{device="..."}
+Per-drive temperature in \(deC, one time series per configured device.
+.El
+.Pp
+Metrics whose collector failed in the most recent poll cycle are omitted
+from the output rather than reported as zero.
 .Sh FAN SPEED CALCULATION
 For each enabled sensor the current reading is linearly interpolated
 between the configured lower and upper bounds:
