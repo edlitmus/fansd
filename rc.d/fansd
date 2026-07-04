@@ -9,10 +9,6 @@
 name="fansd"
 desc="Fan speed daemon"
 rcvar="fansd_enable"
-command="/usr/local/sbin/${name}"
-pidfile="/var/run/${name}.pid"
-
-start_cmd="${name}_start"
 
 load_rc_config "${name}"
 
@@ -20,11 +16,20 @@ load_rc_config "${name}"
 : ${fansd_config:="/usr/local/etc/fansd/fansd.toml"}
 : ${fansd_flags:=""}
 
-fansd_start()
-{
-    /usr/sbin/daemon -P "${pidfile}" -r -f -S \
-        "${command}" -config "${fansd_config}" ${fansd_flags}
-    echo "${name} started."
-}
+# daemon(8) supervises fansd (-r restarts it if it dies). The pidfile that
+# rc.subr tracks must hold the supervisor's pid (-P) so that stop/restart
+# signal the supervisor instead of racing its child respawn; the child pid
+# is kept separately (-p) for status checks.
+fansd_command="/usr/local/sbin/${name}"
+pidfile="/var/run/${name}.pid"
+pidfile_child="/var/run/${name}_child.pid"
+procname="/usr/sbin/daemon"
+command="/usr/sbin/daemon"
+command_args="-P ${pidfile} -p ${pidfile_child} -r -f -S \
+    ${fansd_command} -config ${fansd_config} ${fansd_flags}"
+
+# fansd_flags were folded into command_args above; clear them so rc.subr
+# does not also pass them to daemon(8) itself.
+fansd_flags=""
 
 run_rc_command "$1"
