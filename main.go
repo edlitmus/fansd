@@ -19,6 +19,7 @@ import (
 func main() {
 	cfgPath := flag.String("config", "/usr/local/etc/fansd/fansd.toml", "path to config file")
 	debug := flag.Bool("debug", false, "enable debug logging")
+	useSyslog := flag.Bool("syslog", false, "log directly to syslog instead of stderr")
 	initCfg := flag.String("init-config", "", "auto-detect hardware and write a starter config to this path (use - for stdout)")
 	flag.Parse()
 
@@ -34,7 +35,14 @@ func main() {
 	if *debug {
 		level = slog.LevelDebug
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+	handler, err := newLogHandler(level, *useSyslog)
+	if err != nil {
+		handler, _ = newLogHandler(level, false)
+		slog.SetDefault(slog.New(handler))
+		slog.Warn("syslog unavailable, logging to stderr", "err", err)
+	} else {
+		slog.SetDefault(slog.New(handler))
+	}
 
 	cfg, err := loadConfig(*cfgPath)
 	if err != nil {

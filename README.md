@@ -136,7 +136,7 @@ a genuinely cold sensor.
 ## Usage
 
 ```
-fansd [-config path] [-debug]
+fansd [-config path] [-debug] [-syslog]
 fansd -init-config path|-
 ```
 
@@ -144,6 +144,7 @@ fansd -init-config path|-
 |---|---|---|
 | `-config` | `/usr/local/etc/fansd/fansd.toml` | Path to config file |
 | `-debug` | false | Enable debug-level logging |
+| `-syslog` | false | Log directly to syslog (daemon facility, tag `fansd`), one message per record; falls back to stderr if syslog is unavailable |
 | `-init-config` | — | Probe hardware and write starter config to path (use `-` for stdout); run as root for full drive detection |
 
 ## FreeBSD rc.d integration
@@ -164,9 +165,10 @@ service fansd start
 ```
 
 The service uses `daemon(8)` with `-r` for automatic restart on crash and
-`-S` to send fansd's log output (including `-debug`) to syslog, where it
-appears under the `daemon` facility tagged `fansd` — typically in
-`/var/log/daemon.log`.
+starts fansd with `-syslog`, so log output (including `-debug`) goes to
+syslog under the `daemon` facility tagged `fansd` — typically in
+`/var/log/daemon.log` — with one syslog message per log record.
+`daemon(8)`'s `-S` stays enabled to capture stderr, e.g. panic output.
 On `service fansd stop` the daemon restores BIOS automatic fan control
 before exiting.
 
