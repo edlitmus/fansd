@@ -6,6 +6,18 @@ import (
 	"os/exec"
 )
 
+// ipmitoolPath is resolved once at startup. Daemon launch environments
+// (rc/daemon(8)) have PATH=/sbin:/bin:/usr/sbin:/usr/bin, which does not
+// include /usr/local/bin where the ipmitool port installs.
+var ipmitoolPath = findIpmitool()
+
+func findIpmitool() string {
+	if p, err := exec.LookPath("ipmitool"); err == nil {
+		return p
+	}
+	return "/usr/local/bin/ipmitool"
+}
+
 // Client wraps ipmitool for Dell iDRAC fan control.
 type Client struct {
 	host  string
@@ -51,7 +63,7 @@ func (c *Client) run(args ...string) error {
 	// than -P on the command line, which would expose it to any local user via
 	// ps(1) / procfs. FreeBSD does not reveal another user's environment.
 	base := []string{"-I", c.iface, "-H", c.host, "-U", c.user, "-E"}
-	cmd := exec.Command("ipmitool", append(base, args...)...)
+	cmd := exec.Command(ipmitoolPath, append(base, args...)...)
 	cmd.Env = append(os.Environ(), "IPMI_PASSWORD="+c.pass)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
