@@ -3,11 +3,24 @@ package collector
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 )
+
+// smartctlPath is resolved once at startup. Daemon launch environments
+// (rc/daemon(8)) have PATH=/sbin:/bin:/usr/sbin:/usr/bin, which does not
+// include /usr/local/sbin where smartmontools installs smartctl.
+var smartctlPath = findSmartctl()
+
+func findSmartctl() string {
+	if p, err := exec.LookPath("smartctl"); err == nil {
+		return p
+	}
+	return "/usr/local/sbin/smartctl"
+}
 
 // ErrNoMedium is returned when the device is virtual or has no medium
 // (e.g. an iDRAC virtual floppy). Callers can treat this as permanent.
@@ -43,10 +56,12 @@ func smartctlTemp(device string, extra ...string) (float64, error) {
 
 	// CombinedOutput captures both stdout and stderr so we can detect
 	// errors that smartctl writes to stdout alongside the copyright header.
-	out, err := exec.Command("smartctl", args...).CombinedOutput()
+	out, err := exec.Command(smartctlPath, args...).CombinedOutput()
 	s := string(out)
 	if err != nil {
 		switch {
+		case errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist):
+			return 0, fmt.Errorf("smartctl not found (looked for %s): install smartmontools or fix PATH", smartctlPath)
 		case len(out) == 0 || strings.Contains(s, "Permission denied"):
 			return 0, fmt.Errorf("smartctl %s: permission denied (run as root)", device)
 		case strings.Contains(s, "NO MEDIUM") || strings.Contains(s, "Virtual"):
@@ -72,9 +87,12 @@ func ProbeDriveThresholds(device string) (DriveThresholds, error) {
 	probe := func(extra ...string) (DriveThresholds, error) {
 		args := append([]string{"-a"}, extra...)
 		args = append(args, device)
-		out, err := exec.Command("smartctl", args...).CombinedOutput()
+		out, err := exec.Command(smartctlPath, args...).CombinedOutput()
 		s := string(out)
 		if err != nil {
+			if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
+				return DriveThresholds{}, fmt.Errorf("smartctl not found (looked for %s): install smartmontools or fix PATH", smartctlPath)
+			}
 			if len(out) == 0 || strings.Contains(s, "Permission denied") {
 				return DriveThresholds{}, fmt.Errorf("smartctl %s: permission denied", device)
 			}
